@@ -1,0 +1,132 @@
+= Belsprint
+:toc:
+:toclevels: 2
+:source-highlighter: rouge
+
+== Overview
+
+Belsprint is a portfolio project exploring the development of a modern project management application inspired by Jira.
+
+The initial focus is a Planning Poker tool that helps Agile teams estimate the effort required for tasks through collaborative voting sessions. The project will gradually expand towards issue tracking and other project management features.
+
+The backend is developed with Java and Spring Boot and exposes a REST API. The Angular frontend is maintained in a separate repository.
+
+== Features
+
+=== Planning Poker
+
+The initial feature set focuses on collaborative estimation sessions:
+
+* Create and join planning sessions.
+* Allow participants to submit estimates using Planning Poker cards.
+* Keep votes hidden until they are revealed.
+* Reveal votes and discuss differences in estimates.
+* Support multiple estimation rounds within a session.
+
+These features are the intended initial scope and will be implemented incrementally.
+
+=== Future extensions
+
+* Integrate planning sessions with Belsprint issues.
+* Save agreed estimates as story points on issues.
+* Add issue tracking and project management capabilities.
+* Introduce real-time updates for participants.
+
+== Technology Stack
+
+Backend:
+
+* Java 25
+* Spring Boot 4
+* Maven
+* REST API
+
+Frontend:
+
+* Angular
+* TypeScript
+
+Development and tooling:
+
+* Nix Flakes for reproducible development environments
+* Git for version control
+
+== Prerequisites
+
+* Git
+* Nix with Flakes enabled
+* Java 25, available through the Nix development shell
+
+== Development Setup
+
+Clone the backend repository and enter the project directory:
+
+[source,bash]
+----
+git clone <backend-repository-url>
+cd belsprint-backend
+----
+
+Enter the development environment:
+
+[source,bash]
+----
+nix develop
+----
+
+Verify the Java and Maven environments:
+
+[source,bash]
+----
+java --version
+mvn --version
+----
+
+The project includes the Maven Wrapper, so Maven can also be invoked directly through `./mvnw`.
+
+== Building and Testing
+
+Run the build and tests:
+
+[source,bash]
+----
+./mvnw clean verify
+----
+
+== Running the Application
+
+Start the Spring Boot application using Maven:
+
+[source,bash]
+----
+./mvnw spring-boot:run
+----
+
+Alternatively, package the application and run the generated JAR:
+
+[source,bash]
+----
+./mvnw clean package
+java -jar target/<application-jar>.jar
+----
+
+The backend exposes its REST API locally while the application is running.
+
+== Frontend
+
+The Angular frontend is developed and version-controlled separately from the backend.
+
+The frontend communicates with the backend through its REST API. Each repository has its own dependencies, build process, tests, and CI/CD pipeline.
+
+== Development Principles
+
+Belsprint is intended as a practical portfolio project for exploring:
+
+* Modular backend architecture.
+* REST API design and validation.
+* Automated testing.
+* Continuous integration and continuous delivery.
+* Containerization and deployment.
+* Clear boundaries between frontend and backend.
+
+The initial implementation will remain deliberately small, with additional architecture and infrastructure introduced as the application evolves.
