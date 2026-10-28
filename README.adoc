@@ -131,4 +131,7 @@ Belsprint is intended as a practical portfolio project for exploring:
 
 The initial implementation will remain deliberately small, with additional architecture and infrastructure introduced as the application evolves.
 
-== useful commands for whe
+== deployment guide
+
+=== Local deployment
+See the xref:docs/SYSTEMD_DEPLOYMENT_GUIDE.adoc[Local Deployment Guide]
