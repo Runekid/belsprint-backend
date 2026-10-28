@@ -1,0 +1,337 @@
+= Belsprint Deployment Guide
+:toc:
+:toclevels: 2
+:source-highlighter: rouge
+
+== Overview
+
+This guide describes how to package, deploy, and run the Belsprint Spring Boot application on a NixOS machine using an executable JAR and a systemd service.
+
+The deployment uses:
+
+* Java 25
+* Maven Wrapper
+* NixOS
+* systemd
+* A dedicated, unprivileged `belsprint` system user
+
+The application is configured to listen on `127.0.0.1`, making it accessible only from the local machine by default.
+
+== 1. Build the application
+
+Run these commands from the backend repository root.
+
+=== Run tests and verify the build
+
+[source,bash]
+----
+./mvnw clean verify
+----
+
+=== Package the application
+
+[source,bash]
+----
+./mvnw -pl app -am package
+----
+
+The executable JAR should be generated in `app/target/`.
+
+[source,bash]
+----
+ls -lh app/target/*.jar
+----
+
+Use the executable JAR, not a file ending in `.jar.original`.
+
+== 2. Test the JAR locally
+
+Before deploying, verify that the packaged application starts correctly.
+
+[source,bash]
+----
+java -jar app/target/app-0.0.1-SNAPSHOT.jar
+----
+
+In another terminal, test the endpoint:
+
+[source,bash]
+----
+curl http://localhost:8080/api/hello
+----
+
+Stop the application with `Ctrl+C` when finished.
+
+=== Configure the port
+
+Spring Boot settings can be passed as command-line arguments:
+
+[source,bash]
+----
+java -jar app/target/app-0.0.1-SNAPSHOT.jar --server.port=8081
+----
+
+Alternatively, use an environment variable:
+
+[source,bash]
+----
+SERVER_PORT=8081 java -jar app/target/app-0.0.1-SNAPSHOT.jar
+----
+
+== 3. Prepare the deployment directory
+
+Use `/opt/belsprint` as the deployment directory. This keeps the deployed application separate from the source repository and personal home directory.
+
+Create the directory:
+
+[source,bash]
+----
+sudo install -d -o root -g root -m 755 /opt/belsprint
+----
+
+Copy the packaged JAR into the deployment directory:
+
+[source,bash]
+----
+sudo install -o root -g root -m 644 \
+  app/target/app-0.0.1-SNAPSHOT.jar \
+  /opt/belsprint/app.jar
+----
+
+The deployed artifact is now available at `/opt/belsprint/app.jar`.
+
+The file is owned by root and readable by the service user. This prevents the application process from modifying its own deployed executable.
+
+== 4. Configure the systemd service
+
+Add the following configuration to a NixOS module, for example `personal/belsprint.nix`.
+
+[source,nix]
+----
+{ pkgs, ... }:
+
+{
+  users.groups.belsprint = {};
+
+  users.users.belsprint = {
+    isSystemUser = true;
+    group = "belsprint";
+  };
+
+  systemd.services.belsprint = {
+    description = "Belsprint Spring Boot application";
+
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network.target" ];
+
+    serviceConfig = {
+      Type = "simple";
+
+      User = "belsprint";
+      Group = "belsprint";
+
+      WorkingDirectory = "/opt/belsprint";
+
+      ExecStart =
+        "${pkgs.jdk25}/bin/java -jar /opt/belsprint/app.jar --server.address=127.0.0.1";
+
+      Restart = "on-failure";
+      RestartSec = "5s";
+    };
+  };
+}
+----
+
+Ensure the module is imported by your NixOS configuration if it is stored in a separate file.
+
+=== Important configuration details
+
+`User` and `Group` run the application with a dedicated system account instead of root.
+
+`WorkingDirectory` must be an absolute path. systemd does not expand shell shortcuts such as `~`.
+
+`ExecStart` uses the Java executable from the Nix store. systemd does not execute this command through a shell, so shell features such as tilde expansion and line continuation should not be relied upon.
+
+`Restart = "on-failure"` restarts the application when it exits unsuccessfully.
+
+`wantedBy = [ "multi-user.target" ]` enables the service during normal system startup.
+
+`--server.address=127.0.0.1` restricts the application's listening address to localhost. This is useful when a reverse proxy will handle external requests later.
+
+== 5. Apply the NixOS configuration
+
+Rebuild and activate the system configuration:
+
+[source,bash]
+----
+sudo nixos-rebuild switch
+----
+
+This creates or updates the systemd unit and starts the service. The first deployment will fail if `/opt/belsprint/app.jar` is missing or unreadable.
+
+== 6. Manage the service
+
+=== Check service status
+
+[source,bash]
+----
+systemctl status belsprint
+----
+
+=== Start the service
+
+[source,bash]
+----
+sudo systemctl start belsprint
+----
+
+=== Stop the service
+
+[source,bash]
+----
+sudo systemctl stop belsprint
+----
+
+=== Restart the service
+
+[source,bash]
+----
+sudo systemctl restart belsprint
+----
+
+=== View logs
+
+Show recent logs:
+
+[source,bash]
+----
+journalctl -u belsprint -b --no-pager -n 100
+----
+
+Follow logs in real time:
+
+[source,bash]
+----
+journalctl -u belsprint -f
+----
+
+=== Check whether the service starts on boot
+
+[source,bash]
+----
+systemctl is-enabled belsprint
+----
+
+=== Check the generated unit configuration
+
+[source,bash]
+----
+systemd-analyze verify /etc/systemd/system/belsprint.service
+----
+
+NixOS can generate unit files in locations other than `/etc/systemd/system`. If that path does not exist, inspect the unit with:
+
+[source,bash]
+----
+systemctl cat belsprint
+----
+
+== 7. Test the deployed application
+
+Check that the service is active:
+
+[source,bash]
+----
+systemctl is-active belsprint
+----
+
+Test the endpoint:
+
+[source,bash]
+----
+curl http://127.0.0.1:8080/api/hello
+----
+
+If the request fails, inspect the service logs:
+
+[source,bash]
+----
+journalctl -u belsprint -b --no-pager -n 100
+----
+
+Confirm that the JAR exists and has the expected permissions:
+
+[source,bash]
+----
+ls -l /opt/belsprint/app.jar
+----
+
+Confirm that the application is listening on port 8080:
+
+[source,bash]
+----
+sudo ss -ltnp | grep ':8080'
+----
+
+== 8. Deploy a new version
+
+When the application changes, build a new JAR, replace the deployed artifact, and restart the service.
+
+[source,bash]
+----
+./mvnw clean verify
+./mvnw -pl app -am package
+
+sudo install -o root -g root -m 644
+  app/target/app-0.0.1-SNAPSHOT.jar
+  /opt/belsprint/app.jar
+
+sudo systemctl restart belsprint
+----
+
+Verify the new deployment:
+
+[source,bash]
+----
+systemctl status belsprint
+journalctl -u belsprint -b --no-pager -n 50
+curl http://127.0.0.1:8080/api/hello
+----
+
+This procedure replaces the current JAR before restarting. For more reliable deployments, consider versioned artifacts and a rollback procedure later.
+
+== 9. Troubleshooting
+
+[cols="1,2",options="header"]
+|===
+|Problem
+|What to check
+
+|The service fails to start
+|Run `systemctl status belsprint` and inspect `journalctl -u belsprint -b`.
+
+|Bad unit file setting
+|Check that `WorkingDirectory` and paths in `ExecStart` are absolute.
+
+|Unable to access the JAR
+|Check that `/opt/belsprint/app.jar` exists and is readable by the `belsprint` user.
+
+|Port 8080 is already in use
+|Run `sudo ss -ltnp \| grep ':8080'` and identify the conflicting process.
+
+|The service starts but the endpoint fails
+|Check the application logs, configured port, and endpoint path.
+
+|The application is unavailable remotely
+|The service is bound to `127.0.0.1` intentionally. A reverse proxy or a different network configuration would be needed for external access.
+|===
+
+== Next steps
+
+Once this deployment is reliable, extend the workflow incrementally:
+
+. Automate tests and packaging with a CI pipeline.
+. Automate copying the artifact and restarting the service.
+. Add a reverse proxy and HTTPS if external access is required.
+. Containerize the application with Docker or Podman.
+. Introduce Docker Compose before considering Kubernetes.
