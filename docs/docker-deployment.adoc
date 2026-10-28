@@ -1,0 +1,344 @@
+= Belsprint Docker Deployment
+:toc:
+:toclevels: 2
+:source-highlighter: rouge
+
+== Overview
+
+This guide describes how to deploy the Belsprint Spring Boot application as a Docker container on a NixOS host.
+
+The deployment uses:
+
+* NixOS as the host operating system
+* Docker for containerization
+* Java 25 for the application runtime
+* Maven Wrapper for building and testing
+* Spring Boot for the REST API
+
+The JAR is built on the host machine and copied into a Docker image. Maven is not required inside the container.
+
+The application is published on `127.0.0.1:8080`, making it accessible from the host machine without exposing the port to the local network by default.
+
+== 1. Enable Docker on NixOS
+
+Add the following option to your NixOS configuration, for example in `/etc/nixos/configuration.nix`:
+
+[source,nix]
+----
+{
+  virtualisation.docker.enable = true;
+}
+----
+
+Apply the configuration:
+
+[source,bash]
+----
+sudo nixos-rebuild switch
+----
+
+Verify that the Docker service is running:
+
+[source,bash]
+----
+sudo systemctl status docker
+sudo docker version
+----
+
+The `docker version` command displays client and server information when the daemon is available.
+
+=== Permissions
+
+This guide uses `sudo docker` for Docker commands.
+
+Membership in the `docker` group effectively grants root-level privileges on the host. Avoid adding users to this group unless that level of access is intentional.
+
+== 2. Build the Spring Boot application
+
+From the backend repository root, run the tests and verify the project:
+
+[source,bash]
+----
+./mvnw clean verify
+----
+
+Package the application:
+
+[source,bash]
+----
+./mvnw -pl app -am package
+----
+
+Verify that the executable JAR exists:
+
+[source,bash]
+----
+ls -lh app/target/*.jar
+----
+
+The examples below assume the generated file is named `app-0.0.1-SNAPSHOT.jar`.
+
+If the artifact name or version changes, update the Dockerfile accordingly.
+
+== 3. Create the Dockerfile
+
+Create a file named `Dockerfile` in the repository root, alongside the root `pom.xml` and Maven Wrapper.
+
+[source,dockerfile]
+----
+FROM eclipse-temurin:25-jre
+
+WORKDIR /app
+
+COPY app/target/app-0.0.1-SNAPSHOT.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar", "--server.address=0.0.0.0"]
+----
+
+=== Dockerfile explanation
+
+[cols="1,3",options="header"]
+|===
+|Instruction
+|Purpose
+
+|`FROM`
+|Uses an image containing a Java 25 runtime.
+
+|`WORKDIR`
+|Sets `/app` as the working directory inside the container.
+
+|`COPY`
+|Copies the executable JAR into the image as `/app/app.jar`.
+
+|`EXPOSE`
+|Documents that the application listens on container port 8080. It does not publish the port by itself.
+
+|`ENTRYPOINT`
+|Starts the Spring Boot application when the container runs.
+|===
+
+The application binds to `0.0.0.0` inside the container so that Docker-published traffic can reach it.
+
+This is different from the previous systemd deployment, which bound the application to `127.0.0.1` on the host.
+
+== 4. Build the Docker image
+
+Run the following command from the repository root:
+
+[source,bash]
+----
+sudo docker build -t belsprint:local .
+----
+
+Explanation:
+
+* `docker build` builds an image from the Dockerfile.
+* `-t belsprint:local` assigns the image the name `belsprint` and tag `local`.
+* `.` sets the current directory as the build context.
+
+List the resulting image:
+
+[source,bash]
+----
+sudo docker images belsprint
+----
+
+The image contains the Java runtime and the packaged application. It does not contain the full source repository.
+
+== 5. Run the container
+
+If the systemd deployment is still running, stop it to free port 8080:
+
+[source,bash]
+----
+sudo systemctl stop belsprint
+----
+
+Start the container:
+
+[source,bash]
+----
+sudo docker run --rm \
+  --name belsprint \
+  -p 127.0.0.1:8080:8080 \
+  belsprint:local
+----
+
+The command options have the following meanings:
+
+[cols="1,3",options="header"]
+|===
+|Option
+|Purpose
+
+|`--rm`
+|Removes the container automatically after it stops.
+
+|`--name belsprint`
+|Assigns the container a recognizable name.
+
+|`-p 127.0.0.1:8080:8080`
+|Publishes host port 8080 on localhost and forwards traffic to container port 8080.
+
+|`belsprint:local`
+|Specifies the image to run.
+|===
+
+The terminal displays the Spring Boot logs while the application runs.
+
+Keep this terminal open while testing the application.
+
+== 6. Test the deployment
+
+Open another terminal and call the existing REST endpoint:
+
+[source,bash]
+----
+curl http://127.0.0.1:8080/api/hello
+----
+
+The response should match the one returned when running the application directly with Java.
+
+=== Inspect the running container
+
+List running containers:
+
+[source,bash]
+----
+sudo docker ps
+----
+
+Inspect the container configuration:
+
+[source,bash]
+----
+sudo docker inspect belsprint
+----
+
+Follow the application logs:
+
+[source,bash]
+----
+sudo docker logs -f belsprint
+----
+
+Stop the container by pressing `Ctrl+C` in the terminal running `docker run`.
+
+Because `--rm` was specified, Docker removes the container when it stops. The image remains available.
+
+== 7. Update the application
+
+When the source code changes, rebuild the JAR, rebuild the Docker image, and recreate the container.
+
+=== Build a new JAR
+
+[source,bash]
+----
+./mvnw clean verify
+./mvnw -pl app -am package
+----
+
+=== Rebuild the Docker image
+
+[source,bash]
+----
+sudo docker build -t belsprint:local .
+----
+
+Rebuilding the image with the same tag does not replace an already running container. A container uses the image from which it was created, so it must be recreated to use the new version.
+
+=== Recreate the container
+
+If the existing container is running in the foreground, stop it with `Ctrl+C`. If it was started in detached mode, stop it with:
+
+[source,bash]
+----
+sudo docker stop belsprint
+----
+
+Start the updated container:
+
+[source,bash]
+----
+sudo docker run --rm \
+  --name belsprint \
+  -p 127.0.0.1:8080:8080 \
+  belsprint:local
+----
+
+Test the new deployment again:
+
+[source,bash]
+----
+curl http://127.0.0.1:8080/api/hello
+----
+
+== 8. Troubleshooting
+
+[cols="1,2",options="header"]
+|===
+|Problem
+|What to check
+
+|Docker daemon is unavailable
+|Check `sudo systemctl status docker` and confirm `virtualisation.docker.enable = true` is applied.
+
+|Docker build cannot find the JAR
+|Run the Maven packaging commands and verify the filename in `app/target/` matches the Dockerfile.
+
+|Port 8080 is already allocated
+|Check `sudo ss -ltnp \| grep ':8080'` and stop the conflicting service or use a different host port.
+
+|Container exits immediately
+|Run `sudo docker ps -a` and inspect logs with `sudo docker logs belsprint`. Note that `--rm` removes stopped containers, so logs may no longer be available after exit.
+
+|Application starts but the endpoint is unreachable
+|Verify the port mapping, Spring Boot startup logs, and endpoint path. Confirm that the application binds to `0.0.0.0` inside the container.
+
+|Changes are not visible
+|Rebuild the JAR, rebuild the image, and recreate the container.
+|===
+
+== 9. Deployment architecture
+
+The deployment consists of the NixOS host, Docker daemon, Docker image, and running application container.
+
+[source]
+----
+NixOS host
+|
++-- Docker daemon
+    |
+    +-- Image: belsprint:local
+        |
+        +-- Container: belsprint
+            |
+            +-- Java 25 runtime
+            +-- Spring Boot application
+            +-- Container port 8080
+
+Host 127.0.0.1:8080
+        |
+        +-- Docker port forwarding
+                |
+                +-- Container port 8080
+----
+
+The Docker image is the packaged template. A container is a running instance of that image.
+
+Containers can be removed and recreated without rebuilding the image, provided the desired image already exists.
+
+== 10. Next steps
+
+Once the basic deployment is working, consider the following improvements:
+
+. Add a `.dockerignore` file to exclude unnecessary build and development files from the Docker build context.
+. Use a non-root user inside the container.
+. Add a health endpoint and Docker health check.
+. Introduce `compose.yaml` to manage the application and a database together.
+. Add CI to test, package, and build the image automatically.
+. Automate deployment of versioned images.
+. Add a reverse proxy and HTTPS if external access is required.

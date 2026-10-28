@@ -133,5 +133,5 @@ The initial implementation will remain deliberately small, with additional archi
 
 == deployment guide
 
-=== Local deployment
-See the xref:docs/SYSTEMD_DEPLOYMENT_GUIDE.adoc[Local Deployment Guide]
+* xref:docs/docker-deployment.adoc[Docker Deployment Guide]
+* xref:docs/systemd-deployment.adoc[JAR and systemd Deployment Guide]
